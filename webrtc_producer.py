@@ -5,19 +5,32 @@ import logging
 import json
 import av
 from multiprocessing import Queue
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
+from go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+from go2_webrtc_connect.go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 from aiortc import MediaStreamTrack
-from dotenv import load_dotenv
+
+
+# 디버깅 
 import os
+from pathlib import Path
+print("=== 환경 디버깅 ===")
+print(f"현재 작업 디렉터리: {os.getcwd()}")
+print(f"스크립트 위치: {__file__}")
+print(f"프로젝트 루트: {Path(__file__).parent}")
+# 디버깅
+
+
+from config.settings import SERIAL_NUMBER, UNITREE_USERNAME, UNITREE_PASSWORD
+
+# 디버깅
+print("=== 환경변수 확인 ===")
+print(f"SERIAL_NUMBER: {SERIAL_NUMBER}")
+print(f"UNITREE_USERNAME: {UNITREE_USERNAME}")
+print(f"UNITREE_PASSWORD: {'설정됨' if UNITREE_PASSWORD else 'None'}")
+# 디버깅
 
 logging.basicConfig(level=logging.FATAL)
-
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
-
-SERIAL_NUMBER = os.getenv("SERIAL_NUMBER")
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
+logging.basicConfig(level=logging.INFO)
 
 _conn_holder = {}
 
@@ -25,7 +38,8 @@ _conn_holder = {}
 latest_joystick = None
 
 def start_webrtc(frame_queue, command_queue):
-    av.logging.set_level(av.logging.ERROR)
+    # av.logging.set_level(av.logging.ERROR) 
+    av.logging.set_level(av.logging.DEBUG) # 로깅을 디버그 레벨로 변경
 
     async def recv_camera_stream(track: MediaStreamTrack):
         while True:
@@ -105,8 +119,8 @@ def start_webrtc(frame_queue, command_queue):
         conn = Go2WebRTCConnection(
             WebRTCConnectionMethod.Remote,
             serialNumber=SERIAL_NUMBER,
-            username=USERNAME,
-            password=PASSWORD
+            username=UNITREE_USERNAME,
+            password=UNITREE_PASSWORD
         )
         await conn.connect()
         conn.video.switchVideoChannel(True)
@@ -155,7 +169,7 @@ def ensure_normal_mode_once():
                 RTC_TOPIC["MOTION_SWITCHER"],
                 {"api_id": 1002, "parameter": {"name": "normal"}}
             )
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
     threading.Thread(target=lambda: asyncio.run(switch()), daemon=True).start()
     return True
 

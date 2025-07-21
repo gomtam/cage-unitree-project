@@ -2,20 +2,12 @@ import cv2
 import time
 from flask import Flask, Response, render_template, request, jsonify
 from multiprocessing import Queue
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from project_CAGE.webrtc_producer import start_webrtc, send_command, ensure_normal_mode_once
+from webrtc_producer import start_webrtc, send_command, ensure_normal_mode_once
 import threading
 from ultralytics import YOLO  # YOLO 모델 임포트
+import logging
 
-from dotenv import load_dotenv
-import os
-
-# .env 파일 로드
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
-
-SERIAL_NUMBER = os.getenv("SERIAL_NUMBER")
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__, template_folder='templates')
 frame_queue = Queue(maxsize=10)
@@ -24,15 +16,7 @@ command_queue = Queue(maxsize=10)
 # YOLO 모델 로드
 yolo_model = YOLO('project_CAGE/templates/yolo11n.pt')  # 모델 파일 경로
 
-# Go2WebRTCConnection 객체 생성
-'''
-conn = Go2WebRTCConnection(
-    WebRTCConnectionMethod.Remote,
-    serialNumber=SERIAL_NUMBER,
-    username=USERNAME,
-    password=PASSWORD
-)
-'''
+
 # WebRTC 프레임 수신 시작 (명령 큐도 전달)
 start_webrtc(frame_queue, command_queue)
 
