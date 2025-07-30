@@ -12,14 +12,13 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__, template_folder='templates')
 frame_queue = Queue(maxsize=10)
 command_queue = Queue(maxsize=10)
-lidar_queue = Queue(maxsize=5)  # LiDAR 데이터 큐 추가
 
 # YOLO 모델 로드
 yolo_model = YOLO('project_CAGE/templates/yolo11n.pt')  # 모델 파일 경로
 
 
-# WebRTC 프레임 수신 시작 (명령 큐와 LiDAR 큐도 전달)
-start_webrtc(frame_queue, command_queue, lidar_queue)
+# WebRTC 프레임 수신 시작 (명령 큐도 전달)
+start_webrtc(frame_queue, command_queue)
 
 def generate():
     last_detect_time = 0
@@ -81,37 +80,6 @@ def joystick():
 def start_control():
     ok = ensure_normal_mode_once()
     return jsonify({'status': 'ok' if ok else 'fail'})
-
-@app.route('/lidar_data', methods=['GET'])
-def lidar_data():
-    """LiDAR 데이터를 JSON으로 반환"""
-    if not lidar_queue.empty():
-        try:
-            data = lidar_queue.get_nowait()
-            # LiDAR 데이터 구조 확인 및 변환
-            response_data = {
-                'point_count': data.get('point_count', 0),
-                'positions': data.get('positions', []),
-                'uvs': data.get('uvs', []),
-                'indices': data.get('indices', []),
-                'timestamp': time.time()
-            }
-            return jsonify(response_data)
-        except Exception as e:
-            logging.error(f"LiDAR data error: {e}")
-            return jsonify({'error': str(e)}), 500
-    else:
-        return jsonify({'point_count': 0, 'positions': [], 'timestamp': time.time()})
-
-@app.route('/toggle_lidar', methods=['POST'])
-def toggle_lidar():
-    """LiDAR 센서 ON/OFF 토글"""
-    data = request.get_json()
-    lidar_state = data.get('state', 'on')  # 'on' 또는 'off'
-    
-    # 여기서는 단순히 상태를 반환하지만, 
-    # 실제로는 webrtc_producer를 통해 LiDAR를 제어할 수 있습니다
-    return jsonify({'status': 'ok', 'lidar_state': lidar_state})
     
 
 if __name__ == "__main__":
