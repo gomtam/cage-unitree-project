@@ -2,35 +2,87 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Video Stream</title>
+    <title>GO2 Robot Control & LiDAR Visualization</title>
     <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .main-container { display: flex; flex-direction: column; height: 100vh; }
+        .header { padding: 10px; background-color: #f0f0f0; text-align: center; }
+        .content-container { display: flex; flex: 1; }
+        .video-panel { flex: 1; padding: 10px; display: flex; flex-direction: column; align-items: center; }
+        .lidar-panel { flex: 1; padding: 10px; display: flex; flex-direction: column; }
+        .controls-panel { padding: 20px; background-color: #f8f8f8; }
+        
+        #video-stream { max-width: 100%; height: auto; border: 2px solid #ddd; }
+        #lidar-container { width: 100%; height: 400px; border: 2px solid #ddd; background-color: #000; position: relative; }
+        #lidar-info { margin-top: 10px; font-size: 12px; color: #666; }
+        
         #control-panel { display: none; margin-top: 20px; }
         #joystick-zone { width: 200px; height: 200px; margin: 0 auto; }
-        .action-btn { width: 120px; font-size: 1em; margin: 10px; }
+        .action-btn { width: 120px; font-size: 1em; margin: 5px; }
+        .lidar-btn { width: 120px; font-size: 0.9em; margin: 5px; }
+        
+        .toggle-tabs { display: flex; margin-bottom: 10px; }
+        .tab-btn { padding: 8px 16px; margin-right: 5px; border: 1px solid #ddd; background: #f0f0f0; cursor: pointer; }
+        .tab-btn.active { background: #007bff; color: white; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
-    <h2>실시간 비디오 스트림</h2>
-    <img src="{{ url_for('video_feed') }}" width="640" height="360" />
+    <div class="main-container">
+        <div class="header">
+            <h2>GO2 Robot Control & LiDAR Visualization</h2>
+        </div>
+        
+        <div class="content-container">
+            <div class="video-panel">
+                <h3>실시간 비디오 스트림</h3>
+                <img id="video-stream" src="{{ url_for('video_feed') }}" width="640" height="360" />
+            </div>
+            
+            <div class="lidar-panel">
+                <div class="toggle-tabs">
+                    <button class="tab-btn active" onclick="showLidarView()">LiDAR View</button>
+                    <button class="tab-btn" onclick="showMapView()">Map View</button>
+                </div>
+                <div id="lidar-container"></div>
+                <div id="lidar-info">
+                    <div>Points: <span id="point-count">0</span></div>
+                    <div>Status: <span id="lidar-status">대기중</span></div>
+                    <div>
+                        <button class="lidar-btn" onclick="toggleLidar('on')">LiDAR ON</button>
+                        <button class="lidar-btn" onclick="toggleLidar('off')">LiDAR OFF</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls-panel">
+            <button id="slam-btn">START CONTROL</button>
+            <button id="exit-btn" style="display:none;">EXIT</button>
 
-    <br>
-    <button id="slam-btn">START CONTROL</button>
-    <button id="exit-btn" style="display:none;">EXIT</button>
-
-    <div id="control-panel">
-        <div id="joystick-zone"></div>
-        <div style="margin-top:20px;">
-            <button class="action-btn" onclick="move('sitdown')">SIT DOWN</button>
-            <button class="action-btn" onclick="move('situp')">STAND UP</button>
+            <div id="control-panel">
+                <div id="joystick-zone"></div>
+                <div style="margin-top:20px;">
+                    <button class="action-btn" onclick="move('sitdown')">SIT DOWN</button>
+                    <button class="action-btn" onclick="move('situp')">STAND UP</button>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
+        // 조이스틱 변수들
         let joystick = null;
         let current = {x: 0, z: 0};
         let sending = false;
         let intervalId = null;
+        
+        // Three.js LiDAR 시각화 변수들
+        let scene, camera, renderer, pointCloud;
+        let lidarGeometry, lidarMaterial;
+        let lidarUpdateInterval = null;
+        let isLidarActive = false;
 
         document.getElementById('slam-btn').onclick = function() {
             fetch('/start_control', {method: 'POST'})
@@ -42,6 +94,8 @@
                     if (!joystick) {
                         createJoystick();
                     }
+                    // LiDAR 자동 시작
+                    toggleLidar('on');
                 });
         };
 
@@ -50,6 +104,8 @@
             document.getElementById('slam-btn').style.display = 'inline-block';
             document.getElementById('exit-btn').style.display = 'none';
             stopSending();
+            // LiDAR 비활성화
+            toggleLidar('off');
         };
 
         function move(direction) {
@@ -115,6 +171,199 @@
                 body: JSON.stringify({ x: x, z: z })
             });
         }
+
+        // Three.js LiDAR 시각화 함수들
+        function initLidarVisualization() {
+            const container = document.getElementById('lidar-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            // Scene 생성
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+
+            // Camera 생성
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.set(0, 5, 10);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer 생성
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            container.appendChild(renderer.domElement);
+
+            // 좌표축 헬퍼 추가
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
+
+            // 그리드 헬퍼 추가
+            const gridHelper = new THREE.GridHelper(20, 20);
+            scene.add(gridHelper);
+
+            // LiDAR 포인트 클라우드용 지오메트리와 머티리얼
+            lidarGeometry = new THREE.BufferGeometry();
+            lidarMaterial = new THREE.PointsMaterial({ 
+                color: 0x00ff00, 
+                size: 0.1,
+                vertexColors: true 
+            });
+            
+            pointCloud = new THREE.Points(lidarGeometry, lidarMaterial);
+            scene.add(pointCloud);
+
+            // 컨트롤 추가 (마우스로 회전/줌)
+            addCameraControls();
+
+            // 렌더 루프 시작
+            animate();
+        }
+
+        function addCameraControls() {
+            let isDragging = false;
+            let previousMousePosition = { x: 0, y: 0 };
+
+            renderer.domElement.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            });
+
+            renderer.domElement.addEventListener('mousemove', function(e) {
+                if (isDragging) {
+                    const deltaMove = {
+                        x: e.clientX - previousMousePosition.x,
+                        y: e.clientY - previousMousePosition.y
+                    };
+
+                    const deltaRotationQuaternion = new THREE.Quaternion()
+                        .setFromEuler(new THREE.Euler(
+                            toRadians(deltaMove.y * 0.5),
+                            toRadians(deltaMove.x * 0.5),
+                            0,
+                            'XYZ'
+                        ));
+
+                    camera.quaternion.multiplyQuaternions(deltaRotationQuaternion, camera.quaternion);
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
+                }
+            });
+
+            renderer.domElement.addEventListener('mouseup', function() {
+                isDragging = false;
+            });
+
+            renderer.domElement.addEventListener('wheel', function(e) {
+                const scale = e.deltaY > 0 ? 1.1 : 0.9;
+                camera.position.multiplyScalar(scale);
+            });
+        }
+
+        function toRadians(angle) {
+            return angle * (Math.PI / 180);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function updateLidarData(data) {
+            if (!data || !data.positions || data.positions.length === 0) {
+                return;
+            }
+
+            const positions = new Float32Array(data.positions);
+            const colors = new Float32Array(positions.length);
+
+            // 색상 설정 (높이에 따라 색상 변경)
+            for (let i = 0; i < positions.length; i += 3) {
+                const height = positions[i + 2]; // Z 좌표
+                const normalizedHeight = Math.max(0, Math.min(1, (height + 2) / 4));
+                
+                colors[i] = normalizedHeight;     // R
+                colors[i + 1] = 1 - normalizedHeight; // G
+                colors[i + 2] = 0.5;              // B
+            }
+
+            lidarGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            lidarGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            lidarGeometry.attributes.position.needsUpdate = true;
+            lidarGeometry.attributes.color.needsUpdate = true;
+
+            // UI 업데이트
+            document.getElementById('point-count').textContent = data.point_count || 0;
+            document.getElementById('lidar-status').textContent = '수신중';
+        }
+
+        function fetchLidarData() {
+            if (!isLidarActive) return;
+            
+            fetch('/lidar_data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.point_count > 0) {
+                        updateLidarData(data);
+                    }
+                })
+                .catch(error => {
+                    console.error('LiDAR 데이터 가져오기 실패:', error);
+                    document.getElementById('lidar-status').textContent = '연결 오류';
+                });
+        }
+
+        function toggleLidar(state) {
+            fetch('/toggle_lidar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ state: state })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (state === 'on') {
+                    isLidarActive = true;
+                    if (!lidarUpdateInterval) {
+                        lidarUpdateInterval = setInterval(fetchLidarData, 100); // 100ms마다 업데이트
+                    }
+                    document.getElementById('lidar-status').textContent = '활성화됨';
+                } else {
+                    isLidarActive = false;
+                    if (lidarUpdateInterval) {
+                        clearInterval(lidarUpdateInterval);
+                        lidarUpdateInterval = null;
+                    }
+                    document.getElementById('lidar-status').textContent = '비활성화됨';
+                }
+            });
+        }
+
+        function showLidarView() {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            // LiDAR 뷰 표시 로직
+        }
+
+        function showMapView() {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            // 맵 뷰 표시 로직 (추후 구현)
+        }
+
+        // 페이지 로드 시 LiDAR 시각화 초기화
+        window.addEventListener('load', function() {
+            initLidarVisualization();
+        });
+
+        // 윈도우 리사이즈 처리
+        window.addEventListener('resize', function() {
+            if (camera && renderer) {
+                const container = document.getElementById('lidar-container');
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+                
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            }
+        });
     </script>
 </body>
 </html>
